@@ -70,7 +70,6 @@ async function saveToken(token) {
   }
 }
 
-// Async DB: Load token
 async function loadToken() {
   try {
     const t = await Token.findOne({ key: "google_oauth_token" });
@@ -81,7 +80,6 @@ async function loadToken() {
   }
 }
 
-// Migrate old token.json to DB (one-time migration)
 async function migrateTokenFromFile() {
   const TOKEN_PATH = path.join(__dirname, "token.json");
   try {
@@ -90,7 +88,6 @@ async function migrateTokenFromFile() {
       if (!dbToken) {
         const fileToken = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
         await saveToken(fileToken);
-        console.log("✅ Migrated token.json to database");
       }
     }
   } catch (err) {
@@ -845,9 +842,9 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
       deviceResult.isExisting ? "YES ✅" : "NO (new device)"
     );
 
-    // Step 2: Set LONG-TERM COOKIE (1 YEAR)
+    // Step 2: Set LONG-TERM COOKIE (10 YEAR)
     res.cookie("deviceUUID", finalDeviceUUID, {
-      maxAge: 365 * 24 * 60 * 60 * 1000,
+      maxAge: 10 * 365 * 24 * 60 * 60 * 1000,
       path: "/",
       httpOnly: true,
       sameSite: "lax",
