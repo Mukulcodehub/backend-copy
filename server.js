@@ -445,39 +445,27 @@ function generateDeviceFingerprint(deviceInfo, clientIP) {
   const normTz = normalizeTimezone(deviceInfo.timezone);
   const normIP = normalizeIP(clientIP);
 
-  // DEVICE IDENTIFIERS (hardware + OS level)
   const deviceComponents = [
-    // Hardware
-    deviceInfo.hardwareConcurrency || "unknown", // CPU cores
-    deviceInfo.deviceMemory || "unknown", // RAM
+    deviceInfo.hardwareConcurrency || "unknown",
+    deviceInfo.deviceMemory || "unknown",
     deviceInfo.cpuThreads || "unknown",
 
-    // Screen (physical)
     deviceInfo.screenResolution
       ? `${deviceInfo.screenResolution.width}x${deviceInfo.screenResolution.height}`
       : "unknown",
     deviceInfo.colorDepth || "unknown",
     deviceInfo.pixelDepth || "unknown",
 
-    // OS/Platform
     deviceInfo.os || deviceInfo.platform || "unknown",
     deviceInfo.platform || "unknown",
 
-    // Network/Location
     normIP || "unknown",
     normTz || "unknown",
 
-    // Language
     deviceInfo.language || "unknown",
 
-    // Device capabilities
     deviceInfo.maxTouchPoints || "unknown",
     deviceInfo.devicePixelRatio || "unknown",
-
-    // ❌ IMPORTANT:
-    // Pehle yaha date use kar rahe the (YYYY-MM-DD),
-    // jiski wajah se har din fingerprint change ho raha tha.
-    // Usko hata diya hai taaki same device = same fingerprint rahe.
   ];
 
   const fingerprintString = deviceComponents.join("::");
@@ -712,7 +700,6 @@ async function getOrCreateDeviceUUID({
     console.log("📝 Device Fingerprint:", deviceFingerprint.substring(0, 32) + "...");
     console.log("🌐 First Browser on this device:", browserType);
 
-    // Create new device
     const newDevice = await Device.create({
       deviceUUID: newUUID,
       visitorId: visitorId,
@@ -728,7 +715,7 @@ async function getOrCreateDeviceUUID({
       os: deviceInfo.os || "",
       platform: deviceInfo.platform || "",
       browser: browserType,
-      browsers: [browserType], // Track all browsers used
+      browsers: [browserType],
       lastSeen: new Date(),
       createdAt: new Date(),
     });
@@ -736,27 +723,22 @@ async function getOrCreateDeviceUUID({
     console.log("✅ New device created successfully");
 
     return {
-      deviceUUID: newUUID,
+      deviceUUID: newDevice.deviceUUID,
       source: "new_device",
       isExisting: false,
       deviceInfo: {
-        os: deviceInfo.os,
-        platform: deviceInfo.platform,
-        hardwareCores: deviceInfo.hardwareConcurrency,
-        screen: deviceInfo.screenResolution,
+        os: newDevice.os,
+        platform: newDevice.platform,
+        hardwareCores: newDevice.hardwareConcurrency,
+        screen: newDevice.screenResolution,
         browser: browserType,
+        browsers: newDevice.browsers || [browserType],
       },
     };
   } catch (error) {
     console.error("❌ Device identification error:", error);
-
-    // Fallback
-    const fallbackUUID = require("uuid").v4();
-    return {
-      deviceUUID: fallbackUUID,
-      source: "error_fallback",
-      isExisting: false,
-    };
+    // ❌ NO RANDOM FALLBACK UUID – let caller handle the error
+    throw error;
   }
 }
 
@@ -788,7 +770,6 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
       }
     }
 
-    // Add browser detection
     if (!deviceInfoObj.browser) {
       const userAgent = deviceInfoObj.userAgent || "";
       if (userAgent.includes("Firefox")) deviceInfoObj.browser = "firefox";
@@ -800,7 +781,6 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
       else deviceInfoObj.browser = "other";
     }
 
-    // Normalize timezone
     deviceInfoObj.timezone = normalizeTimezone(deviceInfoObj.timezone);
 
     // Step 1: Get or Create Device UUID (SAME DEVICE = SAME UUID)
@@ -811,7 +791,41 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
       deviceInfo: deviceInfoObj,
     });
 
-    const finalDeviceUUID = deviceResult.deviceUUID;
+    let finalDeviceUUID = deviceResult.deviceUUID;
+
+    // ✅ EXTRA SAFETY: ensure Device doc exists for this UUID
+    let deviceDoc = await Device.findOne({ deviceUUID: finalDeviceUUID });
+
+    if (!deviceDoc) {
+      console.warn(
+        "⚠️ No Device doc found for UUID from deviceResult. Creating one..."
+      );
+      const deviceFingerprint = generateDeviceFingerprint(
+        deviceInfoObj,
+        clientIP
+      );
+
+      deviceDoc = await Device.create({
+        deviceUUID: finalDeviceUUID,
+        visitorId,
+        fingerprint: deviceFingerprint,
+        ip: clientIP,
+        userAgent: deviceInfoObj.userAgent || "",
+        screenResolution: deviceInfoObj.screenResolution
+          ? `${deviceInfoObj.screenResolution.width}x${deviceInfoObj.screenResolution.height}`
+          : "",
+        timezone: deviceInfoObj.timezone || "",
+        language: deviceInfoObj.language || "",
+        hardwareConcurrency: deviceInfoObj.hardwareConcurrency || "",
+        os: deviceInfoObj.os || "",
+        platform: deviceInfoObj.platform || "",
+        browsers: [deviceInfoObj.browser || "unknown"],
+        lastSeen: new Date(),
+        createdAt: new Date(),
+      });
+
+      finalDeviceUUID = deviceDoc.deviceUUID;
+    }
 
     console.log("\n✅ FINAL DEVICE DECISION:");
     console.log("   UUID:", finalDeviceUUID);
@@ -825,7 +839,7 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
 
     // Step 2: Set LONG-TERM COOKIE (1 YEAR)
     res.cookie("deviceUUID", finalDeviceUUID, {
-      maxAge: 365 * 24 * 60 * 60 * 1000, // 1 YEAR
+      maxAge: 365 * 24 * 60 * 60 * 1000,
       path: "/",
       httpOnly: true,
       sameSite: "lax",
@@ -861,7 +875,7 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
       },
       viewLink: uploaded.url,
       serverMac: serverMac,
-      deviceUUID: finalDeviceUUID, // SAME DEVICE = SAME UUID
+      deviceUUID: finalDeviceUUID,
       visitorId: visitorId,
       isExistingDevice: deviceResult.isExisting,
       deviceMatchInfo: {
@@ -869,14 +883,15 @@ app.post("/upload-screenshot", upload.single("image"), async (req, res) => {
         source: deviceResult.source,
         physicalDeviceMatch: deviceResult.isExisting,
         currentBrowser: deviceInfoObj.browser,
-        allBrowsersOnDevice: deviceResult.deviceInfo?.browsers || [
-          deviceInfoObj.browser,
-        ],
+        allBrowsersOnDevice:
+          deviceResult.deviceInfo?.browsers || [deviceInfoObj.browser],
         hardwareInfo: {
-          os: deviceResult.deviceInfo?.os,
-          platform: deviceResult.deviceInfo?.platform,
-          cores: deviceResult.deviceInfo?.hardwareCores,
-          screen: deviceResult.deviceInfo?.screen,
+          os: deviceResult.deviceInfo?.os || deviceDoc.os,
+          platform: deviceResult.deviceInfo?.platform || deviceDoc.platform,
+          cores:
+            deviceResult.deviceInfo?.hardwareCores ||
+            deviceDoc.hardwareConcurrency,
+          screen: deviceResult.deviceInfo?.screen || deviceDoc.screenResolution,
         },
       },
       message: `Screenshot captured successfully`,
@@ -918,7 +933,6 @@ app.post("/api/test-device-match", async (req, res) => {
       clientIP
     );
 
-    // Find matching devices
     const matchingDevices = await Device.find({
       $or: [
         { fingerprint: deviceFingerprint },
@@ -989,7 +1003,6 @@ app.get("/api/device/:uuid", async (req, res) => {
       });
     }
 
-    // Get screenshots
     const screenshots = await Screenshot.find({ deviceUUID: uuid })
       .sort({ createdAt: -1 })
       .limit(20);
