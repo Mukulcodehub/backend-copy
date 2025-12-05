@@ -620,7 +620,6 @@ async function getOrCreateDeviceUUID({
         : "unknown"
     );
 
-    // Generate DEVICE fingerprint (not browser specific)
     const deviceFingerprint = generateDeviceFingerprint(deviceInfo, clientIP);
 
     // Step 1: Try to find existing device
@@ -645,13 +644,22 @@ async function getOrCreateDeviceUUID({
       foundDevice.device.lastSeen = new Date();
       foundDevice.device.visitorId = visitorId || foundDevice.device.visitorId;
 
-      // Add current IP if not already present
-      const currentIPs = Array.isArray(foundDevice.device.ip)
-        ? foundDevice.device.ip
-        : [foundDevice.device.ip];
+      // ✅ FIX: IP ko hamesha STRING ke roop me hi store karna
+      let existingIpStr = "";
 
-      if (!currentIPs.includes(clientIP)) {
-        foundDevice.device.ip = [...currentIPs, clientIP];
+      if (Array.isArray(foundDevice.device.ip)) {
+        // Purane galat data ko normalize karo
+        existingIpStr = foundDevice.device.ip.join(", ");
+      } else if (typeof foundDevice.device.ip === "string") {
+        existingIpStr = foundDevice.device.ip;
+      } else if (!foundDevice.device.ip) {
+        existingIpStr = "";
+      }
+
+      if (!existingIpStr) {
+        foundDevice.device.ip = clientIP;
+      } else if (!existingIpStr.includes(clientIP)) {
+        foundDevice.device.ip = `${existingIpStr}, ${clientIP}`;
       }
 
       // Update fingerprint
@@ -704,7 +712,7 @@ async function getOrCreateDeviceUUID({
       deviceUUID: newUUID,
       visitorId: visitorId,
       fingerprint: deviceFingerprint,
-      ip: clientIP,
+      ip: clientIP, // ✅ string
       userAgent: deviceInfo.userAgent || "",
       screenResolution: deviceInfo.screenResolution
         ? `${deviceInfo.screenResolution.width}x${deviceInfo.screenResolution.height}`
